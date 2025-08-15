@@ -249,15 +249,12 @@ class ImageToTextApp:
             
             # Exibe no canvas centralizada
             self.image_canvas.delete("all")
-            # Força atualização do canvas para obter dimensões corretas
+            # Força múltiplas atualizações do canvas para obter dimensões corretas
             self.image_canvas.update_idletasks()
-            canvas_width = self.image_canvas.winfo_width()
-            canvas_height = self.image_canvas.winfo_height()
+            self.image_canvas.update()
             
-            # Centraliza a imagem no canvas
-            x = canvas_width // 2
-            y = canvas_height // 2
-            self.image_canvas.create_image(x, y, anchor='center', image=self.photo)
+            # Aguarda um momento para garantir que o canvas tenha as dimensões corretas
+            self.root.after(10, lambda: self._center_image_on_canvas())
             
             # Mostra o frame de preview
             self.upload_frame.pack_forget()
@@ -269,6 +266,25 @@ class ImageToTextApp:
             
         except Exception as e:
             messagebox.showerror("Erro", f"Erro ao carregar imagem: {str(e)}")
+    
+    def _center_image_on_canvas(self):
+        """Centraliza a imagem no canvas após garantir que as dimensões estão corretas"""
+        try:
+            if hasattr(self, 'photo') and self.photo:
+                canvas_width = self.image_canvas.winfo_width()
+                canvas_height = self.image_canvas.winfo_height()
+                
+                # Se o canvas ainda não tem dimensões válidas, tenta novamente
+                if canvas_width <= 1 or canvas_height <= 1:
+                    self.root.after(50, lambda: self._center_image_on_canvas())
+                    return
+                
+                # Centraliza a imagem no canvas
+                x = canvas_width // 2
+                y = canvas_height // 2
+                self.image_canvas.create_image(x, y, anchor='center', image=self.photo)
+        except Exception as e:
+            print(f"Erro ao centralizar imagem: {e}")
     
     def remove_image(self):
         """Remove a imagem atual"""
