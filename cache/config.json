@@ -1,0 +1,10 @@
+{
+  "ocr_languages": [
+    "pt",
+    "en"
+  ],
+  "selected_language": "pt",
+  "theme": "dark",
+  "cache_models": true,
+  "show_confidence": true
+}

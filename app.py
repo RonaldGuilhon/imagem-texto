@@ -9,6 +9,9 @@ import io
 import base64
 from threading import Thread
 import time
+import pickle
+import json
+from pathlib import Path
 
 import easyocr
 from ultralytics import YOLO
@@ -27,7 +30,24 @@ class ImageToTextApp:
         self.extracted_text = ""
         self.ocr_reader = None
         
-        # Variáveis removidas: funcionalidade de seleção de área foi removida
+        # Variáveis para seleção de região
+        self.selection_mode = False
+        self.start_x = None
+        self.start_y = None
+        self.rect_id = None
+        self.selected_region = None
+        
+        # Variáveis de controle de zoom
+        self.zoom_factor = 1.0
+        self.min_zoom = 0.1
+        self.max_zoom = 5.0
+        self.zoom_step = 0.1
+        
+        # Cache e configurações
+        self.cache_dir = Path("cache")
+        self.cache_dir.mkdir(exist_ok=True)
+        self.config_file = self.cache_dir / "config.json"
+        self.load_config()
         
         self.setup_ui()
         self.load_yolo_model()
@@ -106,6 +126,79 @@ class ImageToTextApp:
         right_frame = tk.Frame(main_frame, bg='white', relief='raised', bd=2)
         right_frame.pack(side='right', fill='both', expand=True, padx=(5, 0))
         
+        # Frame de controles
+        controls_frame = tk.LabelFrame(right_frame, text="Controles", bg='white', font=('Arial', 10, 'bold'))
+        controls_frame.pack(fill='x', padx=10, pady=(10, 5))
+        
+        # Seção 1: Botões de Área
+        area_section = tk.Frame(controls_frame, bg='white')
+        area_section.pack(fill='x', padx=8, pady=(8, 4))
+        
+        tk.Label(area_section, text="📍 Seleção de Área:", bg='white', font=('Arial', 9, 'bold')).pack(anchor='w')
+        
+        area_buttons_frame = tk.Frame(area_section, bg='white')
+        area_buttons_frame.pack(fill='x', pady=(4, 0))
+        
+        self.select_region_btn = tk.Button(area_buttons_frame, text="Selecionar Área", command=self.toggle_region_selection,
+                                           bg='#3498db', fg='white', relief='flat', cursor='hand2', font=('Arial', 9))
+        self.select_region_btn.pack(side='left', fill='x', expand=True, padx=(0, 3))
+        
+        self.region_ocr_btn = tk.Button(area_buttons_frame, text="OCR da Região", command=self.process_region_ocr,
+                                       bg='#e67e22', fg='white', relief='flat', cursor='hand2', font=('Arial', 9))
+        self.region_ocr_btn.pack(side='right', fill='x', expand=True, padx=(3, 0))
+        
+        # Separador
+        separator1 = tk.Frame(controls_frame, height=1, bg='#ddd')
+        separator1.pack(fill='x', padx=8, pady=4)
+        
+        # Seção 2: Controles de Visualização
+        view_section = tk.Frame(controls_frame, bg='white')
+        view_section.pack(fill='x', padx=8, pady=4)
+        
+        tk.Label(view_section, text="🔍 Visualização:", bg='white', font=('Arial', 9, 'bold')).pack(anchor='w')
+        
+        # Zoom controls
+        zoom_frame = tk.Frame(view_section, bg='white')
+        zoom_frame.pack(fill='x', pady=(4, 0))
+        
+        tk.Label(zoom_frame, text="Zoom:", bg='white', font=('Arial', 9)).pack(side='left')
+        
+        self.zoom_label = tk.Label(zoom_frame, text="100%", bg='white', font=('Arial', 9, 'bold'))
+        self.zoom_label.pack(side='left', padx=(8, 15))
+        
+        self.zoom_out_btn = tk.Button(zoom_frame, text="🔍-", command=self.zoom_out,
+                                     bg='#e74c3c', fg='white', relief='flat', cursor='hand2', width=4, font=('Arial', 8))
+        self.zoom_out_btn.pack(side='right', padx=(2, 0))
+        
+        self.zoom_reset_btn = tk.Button(zoom_frame, text="1:1", command=self.zoom_reset,
+                                       bg='#95a5a6', fg='white', relief='flat', cursor='hand2', width=4, font=('Arial', 8))
+        self.zoom_reset_btn.pack(side='right', padx=(2, 0))
+        
+        self.zoom_in_btn = tk.Button(zoom_frame, text="🔍+", command=self.zoom_in,
+                                    bg='#27ae60', fg='white', relief='flat', cursor='hand2', width=4, font=('Arial', 8))
+        self.zoom_in_btn.pack(side='right', padx=(2, 0))
+        
+        # Separador
+        separator2 = tk.Frame(controls_frame, height=1, bg='#ddd')
+        separator2.pack(fill='x', padx=8, pady=4)
+        
+        # Seção 3: Configurações
+        config_section = tk.Frame(controls_frame, bg='white')
+        config_section.pack(fill='x', padx=8, pady=(4, 8))
+        
+        tk.Label(config_section, text="⚙️ Configurações:", bg='white', font=('Arial', 9, 'bold')).pack(anchor='w')
+        
+        theme_frame = tk.Frame(config_section, bg='white')
+        theme_frame.pack(fill='x', pady=(4, 0))
+        
+        tk.Label(theme_frame, text="Tema:", bg='white', font=('Arial', 9)).pack(side='left')
+        self.theme_btn = tk.Button(theme_frame, text="🌙 Escuro", command=self.toggle_theme,
+                                  bg='#34495e', fg='white', relief='flat', cursor='hand2', font=('Arial', 9))
+        self.theme_btn.pack(side='right')
+        
+        # Aplica tema inicial
+        self.apply_theme()
+        
         # Abas para diferentes funcionalidades
         notebook = ttk.Notebook(right_frame)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
@@ -117,6 +210,20 @@ class ImageToTextApp:
         ocr_label = tk.Label(ocr_frame, text="Texto Extraído:", 
                             font=('Arial', 12, 'bold'), bg='white')
         ocr_label.pack(anchor='w', padx=10, pady=(10, 5))
+        
+        # Frame para confiança do OCR
+        confidence_frame = tk.Frame(ocr_frame, bg='white')
+        confidence_frame.pack(fill='x', padx=10, pady=(0, 5))
+        
+        tk.Label(confidence_frame, text="Confiança:", bg='white').pack(side='left')
+        
+        self.confidence_var = tk.StringVar(value="N/A")
+        self.confidence_label = tk.Label(confidence_frame, textvariable=self.confidence_var, bg='white')
+        self.confidence_label.pack(side='right')
+        
+        # Barra de progresso para confiança
+        self.confidence_progress = ttk.Progressbar(confidence_frame, length=100, mode='determinate')
+        self.confidence_progress.pack(side='right', padx=(5, 10))
         
         self.text_area = scrolledtext.ScrolledText(ocr_frame, wrap=tk.WORD, 
                                                   font=('Courier New', 10),
@@ -165,13 +272,485 @@ class ImageToTextApp:
         # Bind eventos
         self.root.bind('<Control-v>', lambda e: self.paste_image())
         
+        # Bind eventos do canvas para seleção de região
+        self.image_canvas.bind('<Button-1>', self.on_canvas_click)
+        self.image_canvas.bind('<B1-Motion>', self.on_canvas_drag)
+        self.image_canvas.bind('<ButtonRelease-1>', self.on_canvas_release)
+    
+    def load_config(self):
+        """Carrega configurações do arquivo"""
+        default_config = {
+            "ocr_languages": ["pt", "en"],
+            "selected_language": "pt",
+            "theme": "light",
+            "cache_models": True,
+            "show_confidence": True
+        }
+        
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    self.config = json.load(f)
+                # Merge com configurações padrão
+                for key, value in default_config.items():
+                    if key not in self.config:
+                        self.config[key] = value
+            except Exception as e:
+                print(f"Erro ao carregar config: {e}")
+                self.config = default_config
+        else:
+            self.config = default_config
+            self.save_config()
+    
+    def save_config(self):
+        """Salva configurações no arquivo"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"Erro ao salvar config: {e}")
+    
+    def get_model_cache_path(self, model_type):
+        """Retorna o caminho do cache para um modelo"""
+        return self.cache_dir / f"{model_type}_model.pkl"
+    
+    def load_cached_model(self, model_type):
+        """Carrega modelo do cache se existir"""
+        if not self.config.get("cache_models", True):
+            return None
+            
+        cache_path = self.get_model_cache_path(model_type)
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as e:
+                print(f"Erro ao carregar cache {model_type}: {e}")
+                # Remove cache corrompido
+                cache_path.unlink(missing_ok=True)
+        return None
+    
+    def save_model_to_cache(self, model, model_type):
+        """Salva modelo no cache"""
+        if not self.config.get("cache_models", True):
+            return
+            
+        cache_path = self.get_model_cache_path(model_type)
+        try:
+            with open(cache_path, 'wb') as f:
+                pickle.dump(model, f)
+        except Exception as e:
+            print(f"Erro ao salvar cache {model_type}: {e}")
+    
+
+    
+    def toggle_region_selection(self):
+        """Ativa/desativa modo de seleção de região"""
+        self.selection_mode = not self.selection_mode
+        
+        if self.selection_mode:
+            self.region_btn.config(text="Cancelar Seleção", bg='#e74c3c')
+            self.update_status("Modo seleção ativo - clique e arraste para selecionar região")
+            # Limpa seleção anterior
+            if self.rect_id:
+                self.image_canvas.delete(self.rect_id)
+                self.rect_id = None
+            self.selected_region = None
+            self.region_ocr_btn.config(state='disabled')
+        else:
+            self.region_btn.config(text="Selecionar Região", bg='#9b59b6')
+            self.update_status("Modo seleção desativado")
+    
+    def on_canvas_click(self, event):
+        """Inicia seleção de região"""
+        if not self.selection_mode:
+            return
+            
+        self.start_x = event.x
+        self.start_y = event.y
+        
+        # Remove retângulo anterior
+        if self.rect_id:
+            self.image_canvas.delete(self.rect_id)
+    
+    def on_canvas_drag(self, event):
+        """Atualiza seleção durante arraste"""
+        if not self.selection_mode or self.start_x is None:
+            return
+            
+        # Remove retângulo anterior
+        if self.rect_id:
+            self.image_canvas.delete(self.rect_id)
+            
+        # Desenha novo retângulo
+        self.rect_id = self.image_canvas.create_rectangle(
+            self.start_x, self.start_y, event.x, event.y,
+            outline='red', width=2, dash=(5, 5)
+        )
+    
+    def on_canvas_release(self, event):
+        """Finaliza seleção de região"""
+        if not self.selection_mode or self.start_x is None:
+            return
+            
+        end_x = event.x
+        end_y = event.y
+        
+        # Calcula coordenadas da região selecionada
+        if abs(end_x - self.start_x) > 10 and abs(end_y - self.start_y) > 10:
+            # Converte coordenadas do canvas para coordenadas da imagem
+            self.selected_region = self.canvas_to_image_coords(
+                min(self.start_x, end_x), min(self.start_y, end_y),
+                max(self.start_x, end_x), max(self.start_y, end_y)
+            )
+            
+            if self.selected_region:
+                self.region_ocr_btn.config(state='normal')
+                self.update_status("Região selecionada - clique em 'OCR da Região' para processar")
+            else:
+                self.update_status("Região inválida - tente novamente")
+        else:
+            # Seleção muito pequena
+            if self.rect_id:
+                self.image_canvas.delete(self.rect_id)
+                self.rect_id = None
+            self.update_status("Seleção muito pequena - tente novamente")
+    
+    def canvas_to_image_coords(self, x1, y1, x2, y2):
+        """Converte coordenadas do canvas para coordenadas da imagem"""
+        if not hasattr(self, 'current_image') or not self.current_image:
+            return None
+            
+        canvas_width = 400
+        canvas_height = 300
+        
+        img_width, img_height = self.current_image.size
+        ratio = min(canvas_width/img_width, canvas_height/img_height)
+        
+        new_width = int(img_width * ratio)
+        new_height = int(img_height * ratio)
+        
+        # Offset da imagem no canvas
+        offset_x = (canvas_width - new_width) // 2
+        offset_y = (canvas_height - new_height) // 2
+        
+        # Ajusta coordenadas
+        x1 = max(0, x1 - offset_x)
+        y1 = max(0, y1 - offset_y)
+        x2 = min(new_width, x2 - offset_x)
+        y2 = min(new_height, y2 - offset_y)
+        
+        # Converte para coordenadas da imagem original
+        img_x1 = int(x1 / ratio)
+        img_y1 = int(y1 / ratio)
+        img_x2 = int(x2 / ratio)
+        img_y2 = int(y2 / ratio)
+        
+        # Garante que as coordenadas estão dentro da imagem
+        img_x1 = max(0, min(img_x1, img_width))
+        img_y1 = max(0, min(img_y1, img_height))
+        img_x2 = max(0, min(img_x2, img_width))
+        img_y2 = max(0, min(img_y2, img_height))
+        
+        if img_x2 > img_x1 and img_y2 > img_y1:
+            return (img_x1, img_y1, img_x2, img_y2)
+        return None
+    
+    def process_region_ocr(self):
+        """Processa OCR apenas na região selecionada"""
+        # Verifica se há imagem carregada
+        if not hasattr(self, 'current_image') or not self.current_image:
+            messagebox.showwarning("Aviso", "Nenhuma imagem carregada!")
+            return
+            
+        # Verifica se há região selecionada
+        if not self.selected_region:
+            messagebox.showwarning("Aviso", "Nenhuma região selecionada! Clique em 'Selecionar Área' e desenhe uma região na imagem.")
+            return
+            
+        # Verifica se o OCR está carregado, se não, carrega
+        if not hasattr(self, 'ocr_reader') or not self.ocr_reader:
+            messagebox.showinfo("Carregando OCR", "Modelo OCR não está carregado. Carregando agora...")
+            self.load_ocr_model()
+            # Agenda nova tentativa após 3 segundos
+            self.root.after(3000, self.process_region_ocr)
+            return
+        
+        def process():
+            try:
+                self.update_status("Processando OCR da região selecionada...")
+                
+                # Recorta a região da imagem
+                x1, y1, x2, y2 = self.selected_region
+                region_image = self.current_image.crop((x1, y1, x2, y2))
+                
+                # Debug: informações da região selecionada
+                region_width = x2 - x1
+                region_height = y2 - y1
+                print(f"[DEBUG OCR] Região selecionada: {x1},{y1} -> {x2},{y2} (tamanho: {region_width}x{region_height})")
+                
+                # Pré-processamento da região para melhorar OCR
+                processed_image = self.preprocess_region_for_ocr(region_image)
+                print(f"[DEBUG OCR] Pré-processamento concluído. Forma da imagem processada: {processed_image.shape}")
+                
+                # Processa OCR com múltiplas tentativas
+                ocr_results = self.perform_ocr_with_fallback(processed_image, region_image)
+                print(f"[DEBUG OCR] OCR concluído. Resultados encontrados: {len(ocr_results)}")
+                
+                # Debug: detalhes dos resultados
+                for i, (bbox, text, confidence) in enumerate(ocr_results):
+                    print(f"[DEBUG OCR] Resultado {i+1}: '{text}' (confiança: {confidence:.3f})")
+                
+                # Processa resultados
+                extracted_text = ""
+                confidence_info = ""
+                confidences = []
+                for (bbox, text, confidence) in ocr_results:
+                    extracted_text += text + "\n"
+                    confidences.append(confidence)
+                    if self.config.get("show_confidence", True):
+                        confidence_info += f"{text}: {confidence:.2f}\n"
+                
+                # Calcula confiança média
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                
+                # Atualiza interface
+                self.root.after(0, lambda: self.text_area.delete(1.0, tk.END))
+                self.root.after(0, lambda: self.text_area.insert(1.0, f"[REGIÃO SELECIONADA]\n{extracted_text}"))
+                
+                # Atualiza confiança
+                self.root.after(0, lambda: self.confidence_var.set(f"{avg_confidence:.1%}"))
+                self.root.after(0, lambda: self.confidence_progress.config(value=avg_confidence*100))
+                
+                self.update_status("OCR da região concluído!")
+                
+            except Exception as e:
+                self.update_status(f"Erro no OCR da região: {str(e)}")
+                messagebox.showerror("Erro", f"Erro no OCR da região: {e}")
+        
+        thread = Thread(target=process)
+        thread.daemon = True
+        thread.start()
+    
+    def preprocess_region_for_ocr(self, region_image):
+        """Aplica pré-processamento na região para melhorar a detecção de OCR"""
+        try:
+            # Converte PIL para OpenCV
+            img_array = np.array(region_image)
+            print(f"[DEBUG PREPROC] Imagem original: {img_array.shape}")
+            
+            # Se a imagem for muito pequena, redimensiona
+            height, width = img_array.shape[:2]
+            if height < 50 or width < 50:
+                scale_factor = max(50/height, 50/width, 2.0)
+                new_width = int(width * scale_factor)
+                new_height = int(height * scale_factor)
+                img_array = cv2.resize(img_array, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+                print(f"[DEBUG PREPROC] Imagem redimensionada: {img_array.shape} (fator: {scale_factor:.2f})")
+            
+            # Converte para escala de cinza se necessário
+            if len(img_array.shape) == 3:
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            else:
+                gray = img_array.copy()
+            
+            # Aplica filtro de desfoque gaussiano para reduzir ruído
+            denoised = cv2.GaussianBlur(gray, (3, 3), 0)
+            
+            # Melhora o contraste usando CLAHE (Contrast Limited Adaptive Histogram Equalization)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            enhanced = clahe.apply(denoised)
+            
+            # Aplica sharpening para melhorar a definição do texto
+            kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            sharpened = cv2.filter2D(enhanced, -1, kernel)
+            
+            return sharpened
+            
+        except Exception as e:
+            print(f"Erro no pré-processamento: {e}")
+            # Retorna a imagem original em caso de erro
+            return np.array(region_image)
+    
+    def perform_ocr_with_fallback(self, processed_image, original_image):
+        """Executa OCR com múltiplas estratégias de fallback"""
+        try:
+            # Primeira tentativa: imagem pré-processada
+            print(f"[DEBUG FALLBACK] Tentativa 1: imagem pré-processada")
+            results = self.ocr_reader.readtext(processed_image)
+            print(f"[DEBUG FALLBACK] Tentativa 1 - Resultados: {len(results)}")
+            
+            # Se não encontrou texto suficiente, tenta com binarização
+            if len(results) == 0 or (len(results) == 1 and len(results[0][1].strip()) < 2):
+                print(f"[DEBUG FALLBACK] Poucos resultados, tentando binarização adaptativa")
+                # Aplica binarização adaptativa
+                if len(processed_image.shape) == 3:
+                    gray = cv2.cvtColor(processed_image, cv2.COLOR_RGB2GRAY)
+                else:
+                    gray = processed_image
+                
+                # Binarização adaptativa
+                binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+                results_binary = self.ocr_reader.readtext(binary)
+                print(f"[DEBUG FALLBACK] Binarização adaptativa - Resultados: {len(results_binary)}")
+                
+                if len(results_binary) > len(results):
+                    results = results_binary
+                    print(f"[DEBUG FALLBACK] Usando resultados da binarização adaptativa")
+                
+                # Se ainda não encontrou, tenta com a imagem original
+                if len(results) == 0:
+                    print(f"[DEBUG FALLBACK] Tentando com imagem original")
+                    original_array = np.array(original_image)
+                    results = self.ocr_reader.readtext(original_array)
+                    print(f"[DEBUG FALLBACK] Imagem original - Resultados: {len(results)}")
+                
+                # Última tentativa: binarização simples
+                if len(results) == 0:
+                    print(f"[DEBUG FALLBACK] Última tentativa: binarização OTSU")
+                    _, binary_simple = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    results = self.ocr_reader.readtext(binary_simple)
+                    print(f"[DEBUG FALLBACK] Binarização OTSU - Resultados: {len(results)}")
+            
+            return results
+            
+        except Exception as e:
+            print(f"Erro no OCR com fallback: {e}")
+            # Fallback final: OCR na imagem original
+            try:
+                return self.ocr_reader.readtext(np.array(original_image))
+            except:
+                return []
+    
+    def toggle_theme(self):
+        """Alterna entre tema claro e escuro"""
+        current_theme = self.config.get("theme", "light")
+        new_theme = "dark" if current_theme == "light" else "light"
+        
+        self.config["theme"] = new_theme
+        self.save_config()
+        self.apply_theme()
+    
+    def apply_theme(self):
+        """Aplica o tema atual à interface"""
+        theme = self.config.get("theme", "light")
+        
+        if theme == "dark":
+            # Cores do tema escuro
+            bg_color = "#2c3e50"
+            fg_color = "#ecf0f1"
+            frame_bg = "#34495e"
+            text_bg = "#2c3e50"
+            text_fg = "#ecf0f1"
+            button_bg = "#3498db"
+            canvas_bg = "#34495e"
+            
+            self.theme_btn.config(text="☀️ Claro", bg="#f39c12")
+        else:
+            # Cores do tema claro
+            bg_color = "white"
+            fg_color = "black"
+            frame_bg = "white"
+            text_bg = "white"
+            text_fg = "black"
+            button_bg = "#3498db"
+            canvas_bg = "white"
+            
+            self.theme_btn.config(text="🌙 Escuro", bg="#34495e")
+        
+        # Aplica cores aos widgets principais
+        try:
+            self.root.config(bg=bg_color)
+            
+            # Atualiza frames principais
+            for widget in self.root.winfo_children():
+                if isinstance(widget, (tk.Frame, tk.LabelFrame)):
+                    widget.config(bg=frame_bg)
+                    if hasattr(widget, 'config') and 'fg' in widget.keys():
+                        widget.config(fg=fg_color)
+            
+            # Atualiza canvas
+            if hasattr(self, 'image_canvas'):
+                self.image_canvas.config(bg=canvas_bg)
+            
+            # Atualiza áreas de texto
+            if hasattr(self, 'ocr_text'):
+                self.ocr_text.config(bg=text_bg, fg=text_fg, insertbackground=text_fg)
+            if hasattr(self, 'yolo_text'):
+                self.yolo_text.config(bg=text_bg, fg=text_fg, insertbackground=text_fg)
+            
+            # Atualiza labels recursivamente
+            self.update_widget_colors(self.root, bg_color, fg_color, frame_bg, text_bg, text_fg)
+            
+        except Exception as e:
+            print(f"Erro ao aplicar tema: {e}")
+    
+    def update_widget_colors(self, parent, bg_color, fg_color, frame_bg, text_bg, text_fg):
+        """Atualiza cores dos widgets recursivamente"""
+        for child in parent.winfo_children():
+            try:
+                widget_class = child.winfo_class()
+                
+                if widget_class in ['Frame', 'LabelFrame']:
+                    child.config(bg=frame_bg)
+                    if 'fg' in child.keys():
+                        child.config(fg=fg_color)
+                elif widget_class == 'Label':
+                    child.config(bg=frame_bg, fg=fg_color)
+                elif widget_class == 'Text':
+                    child.config(bg=text_bg, fg=text_fg, insertbackground=text_fg)
+                elif widget_class == 'Canvas':
+                    child.config(bg=frame_bg)
+                
+                # Recursão para widgets filhos
+                self.update_widget_colors(child, bg_color, fg_color, frame_bg, text_bg, text_fg)
+                
+            except Exception as e:
+                # Ignora erros de widgets que não suportam certas configurações
+                 pass
+    
+    def zoom_in(self):
+        """Aumenta o zoom da imagem"""
+        if self.zoom_factor < self.max_zoom:
+            self.zoom_factor = min(self.zoom_factor + self.zoom_step, self.max_zoom)
+            self.update_zoom_display()
+    
+    def zoom_out(self):
+        """Diminui o zoom da imagem"""
+        if self.zoom_factor > self.min_zoom:
+            self.zoom_factor = max(self.zoom_factor - self.zoom_step, self.min_zoom)
+            self.update_zoom_display()
+    
+    def zoom_reset(self):
+        """Reseta o zoom para 100%"""
+        self.zoom_factor = 1.0
+        self.update_zoom_display()
+    
+    def update_zoom_display(self):
+        """Atualiza a exibição da imagem com o zoom atual"""
+        # Atualiza o label do zoom
+        zoom_percent = int(self.zoom_factor * 100)
+        self.zoom_label.config(text=f"{zoom_percent}%")
+        
+        # Re-exibe a imagem com o novo zoom
+        if hasattr(self, 'current_image') and self.current_image is not None:
+            self.update_image_preview()
+        
     def load_yolo_model(self):
         """Carrega o modelo YOLO em thread separada"""
         def load_model():
             try:
-                self.update_status("Carregando modelo YOLO...")
-                self.yolo_model = YOLO('yolov8n.pt')
-                self.update_status("Modelo YOLO carregado com sucesso!")
+                # Tenta carregar do cache primeiro
+                cached_model = self.load_cached_model("yolo")
+                if cached_model:
+                    self.yolo_model = cached_model
+                    self.update_status("Modelo YOLO carregado do cache!")
+                else:
+                    self.update_status("Carregando modelo YOLO...")
+                    self.yolo_model = YOLO('yolov8n.pt')
+                    # Salva no cache para próximas execuções
+                    self.save_model_to_cache(self.yolo_model, "yolo")
+                    self.update_status("Modelo YOLO carregado e salvo no cache!")
             except Exception as e:
                 self.update_status(f"Erro ao carregar YOLO: {str(e)}")
         
@@ -181,11 +760,29 @@ class ImageToTextApp:
         """Carrega o modelo EasyOCR em thread separada"""
         def load_model():
             try:
-                self.update_status("Carregando modelo OCR...")
-                self.ocr_reader = easyocr.Reader(['pt', 'en'])  # português e inglês
-                self.update_status("Modelo OCR carregado com sucesso!")
+                # Desabilita botão OCR durante carregamento
+                self.root.after(0, lambda: self.region_ocr_btn.config(state='disabled', text='Carregando OCR...'))
+                
+                # Tenta carregar do cache primeiro
+                cached_model = self.load_cached_model("ocr")
+                if cached_model:
+                    self.ocr_reader = cached_model
+                    self.update_status("Modelo OCR carregado do cache!")
+                else:
+                    self.update_status("Carregando modelo OCR...")
+                    languages = self.config.get("ocr_languages", ['pt', 'en'])
+                    self.ocr_reader = easyocr.Reader(languages)
+                    # Salva no cache para próximas execuções
+                    self.save_model_to_cache(self.ocr_reader, "ocr")
+                    self.update_status("Modelo OCR carregado e salvo no cache!")
+                
+                # Reabilita botão OCR após carregamento
+                self.root.after(0, lambda: self.region_ocr_btn.config(state='normal', text='OCR da Região'))
+                
             except Exception as e:
                 self.update_status(f"Erro ao carregar OCR: {str(e)}")
+                # Reabilita botão mesmo em caso de erro
+                self.root.after(0, lambda: self.region_ocr_btn.config(state='normal', text='OCR da Região'))
         
         Thread(target=load_model, daemon=True).start()
     
@@ -219,6 +816,8 @@ class ImageToTextApp:
             from PIL import ImageGrab
             image = ImageGrab.grabclipboard()
             if image:
+                self.original_image = image
+                self.current_image = image.copy()
                 # Salva temporariamente
                 temp_path = "temp_clipboard_image.png"
                 image.save(temp_path)
@@ -240,6 +839,7 @@ class ImageToTextApp:
             
             # Carrega a imagem
             image = Image.open(file_path)
+            self.original_image = image.copy()
             self.current_image = image.copy()
             
             # Verifica se é imagem colada (arquivo temporário)
@@ -301,6 +901,43 @@ class ImageToTextApp:
         except Exception as e:
             print(f"Erro ao centralizar imagem: {e}")
     
+    def display_image(self):
+        """Exibe a imagem no canvas"""
+        if hasattr(self, 'current_image') and self.current_image:
+            self.update_image_preview()
+    
+    def update_image_preview(self):
+        """Atualiza o preview da imagem no canvas com zoom"""
+        if not hasattr(self, 'current_image') or self.current_image is None:
+            return
+            
+        # Redimensiona a imagem para caber no canvas mantendo proporção
+        canvas_width = 400
+        canvas_height = 300
+        
+        img_width, img_height = self.current_image.size
+        base_ratio = min(canvas_width/img_width, canvas_height/img_height)
+        
+        # Aplica o zoom ao fator de escala
+        final_ratio = base_ratio * self.zoom_factor
+        
+        new_width = int(img_width * final_ratio)
+        new_height = int(img_height * final_ratio)
+        
+        resized_image = self.current_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        self.photo = ImageTk.PhotoImage(resized_image)
+        
+        # Limpa o canvas e adiciona a imagem
+        self.image_canvas.delete("all")
+        x = (canvas_width - new_width) // 2
+        y = (canvas_height - new_height) // 2
+        self.image_canvas.create_image(x, y, anchor='nw', image=self.photo)
+        
+        # Armazena as dimensões para uso posterior
+        self.display_scale = final_ratio
+        self.display_offset_x = x
+        self.display_offset_y = y
+    
     # Funcionalidade de seleção de área removida
     
     def remove_image(self):
@@ -322,7 +959,7 @@ class ImageToTextApp:
     
     def process_image(self):
         """Processa a imagem com YOLO e OCR"""
-        if not self.current_image:
+        if not hasattr(self, 'current_image') or not self.current_image:
             return
         
         try:
@@ -338,11 +975,23 @@ class ImageToTextApp:
                 # Converte PIL para numpy array
                 img_array = np.array(self.current_image)
                 results = self.ocr_reader.readtext(img_array)
-                # Extrai apenas o texto dos resultados
-                text = ' '.join([item[1] for item in results])
-                self.extracted_text = text.strip()
+                # Extrai texto e calcula confiança média
+                texts = []
+                confidences = []
+                for (bbox, text, confidence) in results:
+                    texts.append(text)
+                    confidences.append(confidence)
+                
+                self.extracted_text = ' '.join(texts).strip()
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                
+                # Atualiza confiança
+                self.confidence_var.set(f"{avg_confidence:.1%}")
+                self.confidence_progress.config(value=avg_confidence*100)
             else:
                 self.extracted_text = "Modelo OCR ainda não foi carregado. Aguarde..."
+                self.confidence_var.set("N/A")
+                self.confidence_progress.config(value=0)
             
             # Atualiza a área de texto
             self.text_area.delete(1.0, tk.END)
