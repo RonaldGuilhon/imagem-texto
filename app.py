@@ -27,6 +27,8 @@ class ImageToTextApp:
         self.extracted_text = ""
         self.ocr_reader = None
         
+        # Variáveis removidas: funcionalidade de seleção de área foi removida
+        
         self.setup_ui()
         self.load_yolo_model()
         self.load_ocr_model()
@@ -98,7 +100,7 @@ class ImageToTextApp:
                               command=self.remove_image, font=('Arial', 10),
                               bg='#e74c3c', fg='white', padx=15, pady=5,
                               relief='flat', cursor='hand2')
-        remove_btn.pack(pady=(0, 20))
+        remove_btn.pack(pady=(0, 10))
         
         # Frame direito - Resultados
         right_frame = tk.Frame(main_frame, bg='white', relief='raised', bd=2)
@@ -240,9 +242,22 @@ class ImageToTextApp:
             image = Image.open(file_path)
             self.current_image = image.copy()
             
-            # Redimensiona para exibição
-            display_image = image.copy()
-            display_image.thumbnail((380, 280), Image.Resampling.LANCZOS)
+            # Verifica se é imagem colada (arquivo temporário)
+            is_pasted_image = file_path == "temp_clipboard_image.png"
+            
+            # Para imagens coladas, mantém tamanho real; para arquivos, redimensiona
+            if is_pasted_image:
+                display_image = image.copy()  # Mantém tamanho real
+                # Ajusta o canvas para acomodar a imagem
+                img_width, img_height = display_image.size
+                canvas_width = min(800, img_width + 40)  # Máximo 800px de largura
+                canvas_height = min(600, img_height + 40)  # Máximo 600px de altura
+                self.image_canvas.config(width=canvas_width, height=canvas_height)
+            else:
+                display_image = image.copy()
+                display_image.thumbnail((380, 280), Image.Resampling.LANCZOS)
+                # Restaura tamanho padrão do canvas para arquivos
+                self.image_canvas.config(width=400, height=300)
             
             # Converte para PhotoImage
             self.photo = ImageTk.PhotoImage(display_image)
@@ -285,6 +300,8 @@ class ImageToTextApp:
                 self.image_canvas.create_image(x, y, anchor='center', image=self.photo)
         except Exception as e:
             print(f"Erro ao centralizar imagem: {e}")
+    
+    # Funcionalidade de seleção de área removida
     
     def remove_image(self):
         """Remove a imagem atual"""
