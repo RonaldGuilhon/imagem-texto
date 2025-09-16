@@ -226,8 +226,17 @@ class ImageToTextApp:
         self.confidence_progress.pack(side='right', padx=(5, 10))
         
         self.text_area = scrolledtext.ScrolledText(ocr_frame, wrap=tk.WORD, 
-                                                  font=('Courier New', 10),
-                                                  height=15, width=50)
+                                                  font=('Consolas', 11),
+                                                  height=15, width=50,
+                                                  bg='#f8f9fa', fg='#2c3e50',
+                                                  insertbackground='#3498db',
+                                                  selectbackground='#3498db',
+                                                  selectforeground='white',
+                                                  relief='flat',
+                                                  borderwidth=1,
+                                                  highlightthickness=1,
+                                                  highlightcolor='#3498db',
+                                                  highlightbackground='#bdc3c7')
         self.text_area.pack(fill='both', expand=True, padx=10, pady=5)
         
         # Botões para texto
@@ -907,13 +916,19 @@ class ImageToTextApp:
             self.update_image_preview()
     
     def update_image_preview(self):
-        """Atualiza o preview da imagem no canvas com zoom"""
+        """Atualiza o preview da imagem no canvas com zoom e centralização aprimorada"""
         if not hasattr(self, 'current_image') or self.current_image is None:
             return
             
-        # Redimensiona a imagem para caber no canvas mantendo proporção
-        canvas_width = 400
-        canvas_height = 300
+        # Obtém as dimensões reais do canvas
+        canvas_width = self.image_canvas.winfo_width()
+        canvas_height = self.image_canvas.winfo_height()
+        
+        # Se o canvas ainda não foi renderizado, usa dimensões padrão e reagenda
+        if canvas_width <= 1 or canvas_height <= 1:
+            canvas_width = 400
+            canvas_height = 300
+            self.root.after(50, self.update_image_preview)
         
         img_width, img_height = self.current_image.size
         base_ratio = min(canvas_width/img_width, canvas_height/img_height)
@@ -927,16 +942,20 @@ class ImageToTextApp:
         resized_image = self.current_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         self.photo = ImageTk.PhotoImage(resized_image)
         
-        # Limpa o canvas e adiciona a imagem
+        # Limpa o canvas e centraliza a imagem perfeitamente
         self.image_canvas.delete("all")
-        x = (canvas_width - new_width) // 2
-        y = (canvas_height - new_height) // 2
-        self.image_canvas.create_image(x, y, anchor='nw', image=self.photo)
         
-        # Armazena as dimensões para uso posterior
+        # Centralização perfeita usando o centro do canvas
+        center_x = canvas_width // 2
+        center_y = canvas_height // 2
+        
+        # Cria a imagem centralizada usando anchor='center'
+        self.image_canvas.create_image(center_x, center_y, anchor='center', image=self.photo)
+        
+        # Armazena as dimensões para uso posterior (ajustado para centralização)
         self.display_scale = final_ratio
-        self.display_offset_x = x
-        self.display_offset_y = y
+        self.display_offset_x = (canvas_width - new_width) // 2
+        self.display_offset_y = (canvas_height - new_height) // 2
     
     # Funcionalidade de seleção de área removida
     
@@ -957,6 +976,106 @@ class ImageToTextApp:
         
         self.update_status("Pronto")
     
+    def format_extracted_text(self, ocr_results):
+        """Formata o texto extraído de forma estruturada e organizada"""
+        if not ocr_results:
+            return "Nenhum texto encontrado na imagem."
+        
+        # Organiza os resultados por posição vertical (linha)
+        sorted_results = sorted(ocr_results, key=lambda x: x[0][0][1])  # Ordena por coordenada Y
+        
+        formatted_text = ""
+        current_line_y = None
+        line_tolerance = 20  # Tolerância para considerar textos na mesma linha
+        current_line_texts = []
+        
+        for bbox, text, confidence in sorted_results:
+            # Pega a coordenada Y do centro do texto
+            text_y = (bbox[0][1] + bbox[2][1]) / 2
+            
+            # Se é uma nova linha ou primeira iteração
+            if current_line_y is None or abs(text_y - current_line_y) > line_tolerance:
+                # Processa a linha anterior se existir
+                if current_line_texts:
+                    # Ordena textos da linha por posição X
+                    current_line_texts.sort(key=lambda x: x[1])  # Ordena por X
+                    line_text = " ".join([t[0] for t in current_line_texts])
+                    formatted_text += line_text.strip() + "\n"
+                
+                # Inicia nova linha
+                current_line_y = text_y
+                current_line_texts = [(text.strip(), bbox[0][0])]  # (texto, coordenada X)
+            else:
+                # Adiciona à linha atual
+                current_line_texts.append((text.strip(), bbox[0][0]))
+        
+        # Processa a última linha
+        if current_line_texts:
+            current_line_texts.sort(key=lambda x: x[1])
+            line_text = " ".join([t[0] for t in current_line_texts])
+            formatted_text += line_text.strip() + "\n"
+        
+        # Remove linhas vazias e espaços extras
+        lines = [line.strip() for line in formatted_text.split('\n') if line.strip()]
+        
+        # Junta linhas que parecem ser continuação (heurística simples)
+        final_lines = []
+        for i, line in enumerate(lines):
+            if i == 0:
+                final_lines.append(line)
+            else:
+                # Se a linha anterior não termina com pontuação e a atual não começa com maiúscula
+                prev_line = final_lines[-1]
+                if (not prev_line.endswith(('.', '!', '?', ':', ';')) and 
+                    line and not line[0].isupper() and 
+                    len(prev_line) > 0):
+                    # Junta com a linha anterior
+                    final_lines[-1] = prev_line + " " + line
+                else:
+                    final_lines.append(line)
+        
+        return "\n".join(final_lines) if final_lines else "Nenhum texto encontrado na imagem."
+    
+    def add_text_metadata(self, formatted_text, ocr_results, avg_confidence):
+        """Adiciona metadados úteis ao texto extraído"""
+        if not ocr_results:
+            return formatted_text
+        
+        metadata = []
+        metadata.append("=" * 50)
+        metadata.append("TEXTO EXTRAÍDO")
+        metadata.append("=" * 50)
+        metadata.append("")
+        
+        # Adiciona o texto formatado
+        text_lines = formatted_text.split('\n')
+        for line in text_lines:
+            if line.strip():
+                metadata.append(line)
+        
+        metadata.append("")
+        metadata.append("-" * 50)
+        metadata.append("INFORMAÇÕES TÉCNICAS")
+        metadata.append("-" * 50)
+        metadata.append(f"• Blocos de texto detectados: {len(ocr_results)}")
+        metadata.append(f"• Confiança média: {avg_confidence:.1%}")
+        
+        # Estatísticas de confiança
+        confidences = [conf for _, _, conf in ocr_results]
+        if confidences:
+            metadata.append(f"• Confiança mínima: {min(confidences):.1%}")
+            metadata.append(f"• Confiança máxima: {max(confidences):.1%}")
+        
+        # Contagem de caracteres e palavras
+        clean_text = formatted_text.replace('\n', ' ').strip()
+        word_count = len(clean_text.split()) if clean_text else 0
+        char_count = len(clean_text)
+        
+        metadata.append(f"• Total de palavras: {word_count}")
+        metadata.append(f"• Total de caracteres: {char_count}")
+        
+        return "\n".join(metadata)
+    
     def process_image(self):
         """Processa a imagem com YOLO e OCR"""
         if not hasattr(self, 'current_image') or not self.current_image:
@@ -975,15 +1094,18 @@ class ImageToTextApp:
                 # Converte PIL para numpy array
                 img_array = np.array(self.current_image)
                 results = self.ocr_reader.readtext(img_array)
-                # Extrai texto e calcula confiança média
-                texts = []
-                confidences = []
-                for (bbox, text, confidence) in results:
-                    texts.append(text)
-                    confidences.append(confidence)
+                # Formata o texto de forma estruturada
+                formatted_text = self.format_extracted_text(results)
                 
-                self.extracted_text = ' '.join(texts).strip()
+                # Calcula confiança média
+                confidences = [confidence for (bbox, text, confidence) in results]
                 avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                
+                # Adiciona metadados se configurado
+                if self.config.get("show_metadata", True):
+                    self.extracted_text = self.add_text_metadata(formatted_text, results, avg_confidence)
+                else:
+                    self.extracted_text = formatted_text
                 
                 # Atualiza confiança
                 self.confidence_var.set(f"{avg_confidence:.1%}")
@@ -996,7 +1118,28 @@ class ImageToTextApp:
             # Atualiza a área de texto
             self.text_area.delete(1.0, tk.END)
             if self.extracted_text:
+                # Adiciona formatação visual ao texto
                 self.text_area.insert(1.0, self.extracted_text)
+                
+                # Configura tags para diferentes tipos de texto
+                self.text_area.tag_configure("metadata", foreground="#7f8c8d", font=('Consolas', 10, 'italic'))
+                self.text_area.tag_configure("content", foreground="#2c3e50", font=('Consolas', 11))
+                self.text_area.tag_configure("separator", foreground="#95a5a6", font=('Consolas', 10))
+                
+                # Aplica formatação baseada no conteúdo
+                lines = self.extracted_text.split('\n')
+                current_line = 1
+                for line in lines:
+                    if line.startswith('=') or line.startswith('-'):
+                        # Separadores
+                        self.text_area.tag_add("separator", f"{current_line}.0", f"{current_line}.end")
+                    elif line.startswith('•') or 'Confiança' in line or 'palavras:' in line or 'caracteres:' in line:
+                        # Metadados
+                        self.text_area.tag_add("metadata", f"{current_line}.0", f"{current_line}.end")
+                    else:
+                        # Conteúdo principal
+                        self.text_area.tag_add("content", f"{current_line}.0", f"{current_line}.end")
+                    current_line += 1
             else:
                 self.text_area.insert(1.0, "Nenhum texto encontrado na imagem.")
             
