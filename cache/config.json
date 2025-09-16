@@ -4,7 +4,8 @@
     "en"
   ],
   "selected_language": "pt",
-  "theme": "dark",
+  "theme": "light",
   "cache_models": true,
-  "show_confidence": true
+  "show_confidence": true,
+  "auto_rotation": true
 }
