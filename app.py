@@ -182,7 +182,68 @@ class ImageToTextApp:
         separator2 = tk.Frame(controls_frame, height=1, bg='#ddd')
         separator2.pack(fill='x', padx=8, pady=4)
         
-        # Seção 3: Configurações
+        # Seção 3: Processamento
+        process_section = tk.Frame(controls_frame, bg='white')
+        process_section.pack(fill='x', padx=8, pady=4)
+        
+        tk.Label(process_section, text="⚡ Processamento:", bg='white', font=('Arial', 9, 'bold')).pack(anchor='w')
+        
+        process_frame = tk.Frame(process_section, bg='white')
+        process_frame.pack(fill='x', pady=(4, 0))
+        
+        self.process_btn = tk.Button(process_frame, text="🔍 Processar Imagem", 
+                                    command=lambda: Thread(target=self.process_image, daemon=True).start(),
+                                    bg='#2ecc71', fg='white', relief='flat', cursor='hand2', 
+                                    font=('Arial', 9, 'bold'), padx=20, pady=8)
+        self.process_btn.pack(fill='x')
+        
+        # Separador
+        separator3 = tk.Frame(controls_frame, height=1, bg='#ddd')
+        separator3.pack(fill='x', padx=8, pady=4)
+        
+        # Seção 4: Rotação de Imagem
+        rotation_section = tk.Frame(controls_frame, bg='white')
+        rotation_section.pack(fill='x', padx=8, pady=4)
+        
+        tk.Label(rotation_section, text="🔄 Rotação:", bg='white', font=('Arial', 9, 'bold')).pack(anchor='w')
+        
+        # Botão de rotação automática
+        auto_rotate_frame = tk.Frame(rotation_section, bg='white')
+        auto_rotate_frame.pack(fill='x', pady=(4, 2))
+        
+        self.auto_rotate_btn = tk.Button(auto_rotate_frame, text="🔄 Auto Rotação", command=self.auto_rotate_image,
+                                        bg='#9b59b6', fg='white', relief='flat', cursor='hand2', font=('Arial', 9))
+        self.auto_rotate_btn.pack(fill='x')
+        
+        # Botões de rotação manual
+        manual_rotate_frame = tk.Frame(rotation_section, bg='white')
+        manual_rotate_frame.pack(fill='x', pady=(2, 0))
+        
+        tk.Label(manual_rotate_frame, text="Manual:", bg='white', font=('Arial', 8)).pack(side='left')
+        
+        self.rotate_left_btn = tk.Button(manual_rotate_frame, text="↺ 90°", 
+                                        command=lambda: self.manual_rotate_image(90),
+                                        bg='#e67e22', fg='white', relief='flat', cursor='hand2', 
+                                        width=6, font=('Arial', 8))
+        self.rotate_left_btn.pack(side='right', padx=(2, 0))
+        
+        self.rotate_180_btn = tk.Button(manual_rotate_frame, text="↻ 180°", 
+                                       command=lambda: self.manual_rotate_image(180),
+                                       bg='#e74c3c', fg='white', relief='flat', cursor='hand2', 
+                                       width=6, font=('Arial', 8))
+        self.rotate_180_btn.pack(side='right', padx=(2, 0))
+        
+        self.rotate_right_btn = tk.Button(manual_rotate_frame, text="↻ 90°", 
+                                         command=lambda: self.manual_rotate_image(-90),
+                                         bg='#f39c12', fg='white', relief='flat', cursor='hand2', 
+                                         width=6, font=('Arial', 8))
+        self.rotate_right_btn.pack(side='right', padx=(2, 0))
+        
+        # Separador
+        separator3 = tk.Frame(controls_frame, height=1, bg='#ddd')
+        separator3.pack(fill='x', padx=8, pady=4)
+        
+        # Seção 5: Configurações
         config_section = tk.Frame(controls_frame, bg='white')
         config_section.pack(fill='x', padx=8, pady=(4, 8))
         
@@ -195,6 +256,16 @@ class ImageToTextApp:
         self.theme_btn = tk.Button(theme_frame, text="🌙 Escuro", command=self.toggle_theme,
                                   bg='#34495e', fg='white', relief='flat', cursor='hand2', font=('Arial', 9))
         self.theme_btn.pack(side='right')
+        
+        # Configuração de rotação automática
+        rotation_config_frame = tk.Frame(config_section, bg='white')
+        rotation_config_frame.pack(fill='x', pady=(4, 0))
+        
+        tk.Label(rotation_config_frame, text="Rotação Automática:", bg='white', font=('Arial', 9)).pack(side='left')
+        self.auto_rotation_var = tk.BooleanVar(value=self.config.get('auto_rotation', True))
+        self.auto_rotation_check = tk.Checkbutton(rotation_config_frame, variable=self.auto_rotation_var,
+                                                 command=self.toggle_auto_rotation, bg='white', font=('Arial', 9))
+        self.auto_rotation_check.pack(side='right')
         
         # Aplica tema inicial
         self.apply_theme()
@@ -293,7 +364,8 @@ class ImageToTextApp:
             "selected_language": "pt",
             "theme": "light",
             "cache_models": True,
-            "show_confidence": True
+            "show_confidence": True,
+            "auto_rotation": True
         }
         
         if self.config_file.exists():
@@ -639,6 +711,12 @@ class ImageToTextApp:
         self.config["theme"] = new_theme
         self.save_config()
         self.apply_theme()
+    
+    def toggle_auto_rotation(self):
+        """Alterna a configuração de rotação automática"""
+        self.config["auto_rotation"] = self.auto_rotation_var.get()
+        self.save_config()
+        print(f"Rotação automática: {'Ativada' if self.config['auto_rotation'] else 'Desativada'}")
     
     def apply_theme(self):
         """Aplica o tema atual à interface"""
@@ -1076,18 +1154,178 @@ class ImageToTextApp:
         
         return "\n".join(metadata)
     
-    def process_image(self):
-        """Processa a imagem com YOLO e OCR"""
+    def detect_and_correct_rotation(self, image):
+        """Detecta e corrige automaticamente a rotação da imagem para melhor OCR"""
+        try:
+            # Converte PIL para OpenCV se necessário
+            if hasattr(image, 'mode'):  # PIL Image
+                cv_image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+            else:  # Já é numpy array
+                cv_image = image
+            
+            # Converte para escala de cinza
+            gray = cv2.cvtColor(cv_image, cv2.COLOR_BGR2GRAY)
+            
+            # Aplica threshold para binarizar
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # Detecta linhas usando Hough Transform com parâmetros mais rigorosos
+            edges = cv2.Canny(binary, 50, 150, apertureSize=3)
+            lines = cv2.HoughLines(edges, 1, np.pi/180, threshold=200)  # Threshold aumentado
+            
+            if lines is not None and len(lines) >= 10:  # Precisa de pelo menos 10 linhas
+                angles = []
+                for line in lines[:30]:  # Analisa mais linhas para melhor precisão
+                    rho, theta = line[0]
+                    angle = theta * 180 / np.pi
+                    # Normaliza o ângulo para -90 a 90 graus
+                    if angle > 90:
+                        angle = angle - 180
+                    elif angle < -90:
+                        angle = angle + 180
+                    angles.append(angle)
+                
+                if len(angles) >= 10:  # Precisa de pelo menos 10 ângulos válidos
+                    # Filtra outliers usando desvio padrão
+                    angles_array = np.array(angles)
+                    mean_angle = np.mean(angles_array)
+                    std_angle = np.std(angles_array)
+                    
+                    # Remove outliers (ângulos muito distantes da média)
+                    filtered_angles = angles_array[np.abs(angles_array - mean_angle) <= 2 * std_angle]
+                    
+                    if len(filtered_angles) >= 5:  # Precisa de pelo menos 5 ângulos após filtragem
+                        # Calcula o ângulo médio dos dados filtrados
+                        median_angle = np.median(filtered_angles)
+                        
+                        # Só corrige se o ângulo for significativo (> 3 graus) e consistente
+                        if abs(median_angle) > 3 and std_angle < 15:  # Threshold aumentado e verifica consistência
+                            print(f"[DEBUG] Rotação detectada: {median_angle:.2f}° (std: {std_angle:.2f}°)")
+                            
+                            # Rotaciona a imagem
+                            if hasattr(image, 'mode'):  # PIL Image
+                                corrected_image = image.rotate(-median_angle, expand=True, fillcolor='white')
+                                return corrected_image, median_angle
+                            else:
+                                # Para numpy array
+                                height, width = cv_image.shape[:2]
+                                center = (width // 2, height // 2)
+                                rotation_matrix = cv2.getRotationMatrix2D(center, -median_angle, 1.0)
+                                
+                                # Calcula novas dimensões
+                                cos_angle = abs(rotation_matrix[0, 0])
+                                sin_angle = abs(rotation_matrix[0, 1])
+                                new_width = int((height * sin_angle) + (width * cos_angle))
+                                new_height = int((height * cos_angle) + (width * sin_angle))
+                                
+                                # Ajusta a matriz de rotação
+                                rotation_matrix[0, 2] += (new_width / 2) - center[0]
+                                rotation_matrix[1, 2] += (new_height / 2) - center[1]
+                                
+                                rotated = cv2.warpAffine(cv_image, rotation_matrix, (new_width, new_height), 
+                                                       borderValue=(255, 255, 255))
+                                
+                                # Converte de volta para PIL
+                                corrected_image = Image.fromarray(cv2.cvtColor(rotated, cv2.COLOR_BGR2RGB))
+                                return corrected_image, median_angle
+                        else:
+                            print(f"[DEBUG] Rotação não significativa: {median_angle:.2f}° (std: {std_angle:.2f}°)")
+                    else:
+                        print(f"[DEBUG] Poucos ângulos válidos após filtragem: {len(filtered_angles)}")
+                else:
+                    print(f"[DEBUG] Poucos ângulos detectados: {len(angles)}")
+            else:
+                print(f"[DEBUG] Poucas linhas detectadas: {len(lines) if lines is not None else 0}")
+            
+            # Se não detectou rotação significativa, retorna a imagem original
+            return image, 0
+            
+        except Exception as e:
+            print(f"[DEBUG] Erro na detecção de rotação: {e}")
+            return image, 0
+    
+    def auto_rotate_image(self):
+        """Aplica correção automática de rotação na imagem atual"""
         if not hasattr(self, 'current_image') or not self.current_image:
+            messagebox.showwarning("Aviso", "Nenhuma imagem carregada.")
             return
         
         try:
+            self.update_status("Detectando rotação da imagem...")
+            
+            # Detecta e corrige rotação
+            corrected_image, rotation_angle = self.detect_and_correct_rotation(self.current_image)
+            
+            if abs(rotation_angle) > 1:
+                # Atualiza a imagem atual
+                self.current_image = corrected_image
+                
+                # Atualiza a visualização
+                self.display_image()
+                
+                self.update_status(f"Imagem rotacionada em {-rotation_angle:.1f}° automaticamente")
+                messagebox.showinfo("Sucesso", f"Rotação corrigida automaticamente: {-rotation_angle:.1f}°")
+            else:
+                self.update_status("Nenhuma rotação significativa detectada")
+                messagebox.showinfo("Info", "A imagem já está com orientação adequada.")
+                
+        except Exception as e:
+            self.update_status("Erro na correção automática")
+            messagebox.showerror("Erro", f"Erro ao corrigir rotação: {str(e)}")
+    
+    def manual_rotate_image(self, angle):
+        """Rotaciona manualmente a imagem pelo ângulo especificado"""
+        if not hasattr(self, 'current_image') or not self.current_image:
+            messagebox.showwarning("Aviso", "Nenhuma imagem carregada.")
+            return
+        
+        try:
+            # Rotaciona a imagem
+            rotated_image = self.current_image.rotate(angle, expand=True, fillcolor='white')
+            
+            # Atualiza a imagem atual
+            self.current_image = rotated_image
+            
+            # Atualiza a visualização
+            self.display_image()
+            
+            self.update_status(f"Imagem rotacionada em {angle}°")
+            
+        except Exception as e:
+            self.update_status("Erro na rotação manual")
+            messagebox.showerror("Erro", f"Erro ao rotacionar imagem: {str(e)}")
+    
+    def process_image(self):
+        """Processa a imagem com YOLO e OCR"""
+        if not hasattr(self, 'current_image') or not self.current_image:
+            messagebox.showwarning("Aviso", "Nenhuma imagem carregada.")
+            return
+        
+        try:
+            self.update_status("Processando imagem...")
+            
+            # Primeiro, detecta e corrige automaticamente a rotação (se habilitado)
+            if self.config.get('auto_rotation', True):
+                corrected_image, rotation_angle = self.detect_and_correct_rotation(self.current_image)
+                
+                if abs(rotation_angle) > 1:
+                    print(f"[DEBUG] Imagem corrigida automaticamente: {-rotation_angle:.1f}°")
+                    # Atualiza a imagem atual com a versão corrigida
+                    self.current_image = corrected_image
+                    # Atualiza a visualização
+                    self.display_image()
+                else:
+                    corrected_image = self.current_image
+            else:
+                corrected_image = self.current_image
+                print("[DEBUG] Rotação automática desabilitada")
+            
             # OCR
             self.update_status("Extraindo texto da imagem...")
             self.progress_bar.start()
             
             # Converte PIL para OpenCV
-            cv_image = cv2.cvtColor(np.array(self.current_image), cv2.COLOR_RGB2BGR)
+            cv_image = cv2.cvtColor(np.array(corrected_image), cv2.COLOR_RGB2BGR)
             
             # OCR com EasyOCR
             if self.ocr_reader:
