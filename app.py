@@ -654,11 +654,20 @@ class ImageToTextApp:
             return np.array(region_image)
     
     def perform_ocr_with_fallback(self, processed_image, original_image):
-        """Executa OCR com múltiplas estratégias de fallback"""
+        """Executa OCR com múltiplas estratégias de fallback e pós-processamento para underscores"""
         try:
             # Primeira tentativa: imagem pré-processada
             print(f"[DEBUG FALLBACK] Tentativa 1: imagem pré-processada")
-            results = self.ocr_reader.readtext(processed_image)
+            results = self.ocr_reader.readtext(
+                processed_image,
+                detail=1,  # Retorna coordenadas, texto e confiança
+                paragraph=False,  # Não agrupa em parágrafos
+                width_ths=0.7,  # Threshold para largura de texto
+                height_ths=0.7,  # Threshold para altura de texto
+                decoder='greedy',  # Decodificador mais preciso
+                beamWidth=5,  # Largura do beam search
+                batch_size=1  # Processa uma imagem por vez
+            )
             print(f"[DEBUG FALLBACK] Tentativa 1 - Resultados: {len(results)}")
             
             # Se não encontrou texto suficiente, tenta com binarização
@@ -672,7 +681,15 @@ class ImageToTextApp:
                 
                 # Binarização adaptativa
                 binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-                results_binary = self.ocr_reader.readtext(binary)
+                results_binary = self.ocr_reader.readtext(
+                    binary,
+                    detail=1,
+                    paragraph=False,
+                    width_ths=0.5,  # Mais permissivo para caracteres especiais
+                    height_ths=0.5,
+                    decoder='greedy',
+                    beamWidth=5
+                )
                 print(f"[DEBUG FALLBACK] Binarização adaptativa - Resultados: {len(results_binary)}")
                 
                 if len(results_binary) > len(results):
@@ -683,15 +700,25 @@ class ImageToTextApp:
                 if len(results) == 0:
                     print(f"[DEBUG FALLBACK] Tentando com imagem original")
                     original_array = np.array(original_image)
-                    results = self.ocr_reader.readtext(original_array)
+                    results = self.ocr_reader.readtext(
+                        original_array,
+                        detail=1,
+                        paragraph=False,
+                        width_ths=0.3,  # Ainda mais permissivo
+                        height_ths=0.3,
+                        decoder='greedy'
+                    )
                     print(f"[DEBUG FALLBACK] Imagem original - Resultados: {len(results)}")
                 
                 # Última tentativa: binarização simples
                 if len(results) == 0:
                     print(f"[DEBUG FALLBACK] Última tentativa: binarização OTSU")
                     _, binary_simple = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                    results = self.ocr_reader.readtext(binary_simple)
+                    results = self.ocr_reader.readtext(binary_simple, detail=1, paragraph=False)
                     print(f"[DEBUG FALLBACK] Binarização OTSU - Resultados: {len(results)}")
+            
+            # Pós-processamento para melhorar reconhecimento de underscores
+            results = self.post_process_underscore_detection(results)
             
             return results
             
@@ -699,9 +726,73 @@ class ImageToTextApp:
             print(f"Erro no OCR com fallback: {e}")
             # Fallback final: OCR na imagem original
             try:
-                return self.ocr_reader.readtext(np.array(original_image))
+                fallback_results = self.ocr_reader.readtext(np.array(original_image))
+                return self.post_process_underscore_detection(fallback_results)
             except:
                 return []
+    
+    def post_process_underscore_detection(self, ocr_results):
+        """Pós-processamento para melhorar detecção de underscores e caracteres especiais"""
+        if not ocr_results:
+            return ocr_results
+        
+        processed_results = []
+        
+        for bbox, text, confidence in ocr_results:
+            original_text = text
+            processed_text = text
+            
+            # Padrões comuns de erro para underscores
+            underscore_patterns = [
+                # Underscores são frequentemente confundidos com hífens ou espaços
+                (r'(\w)\s+(\w)', r'\1_\2'),  # espaço entre palavras -> underscore
+                (r'(\w)-(\w)', r'\1_\2'),    # hífen entre palavras -> underscore
+                (r'(\w)\.(\w)', r'\1_\2'),   # ponto entre palavras -> underscore
+                (r'(\w),(\w)', r'\1_\2'),    # vírgula entre palavras -> underscore
+                (r'(\w);(\w)', r'\1_\2'),    # ponto e vírgula -> underscore
+                (r'(\w):(\w)', r'\1_\2'),    # dois pontos -> underscore
+                (r'(\w)\|(\w)', r'\1_\2'),   # pipe -> underscore
+                (r'(\w)l(\w)', r'\1_\2'),    # letra 'l' minúscula -> underscore
+                (r'(\w)I(\w)', r'\1_\2'),    # letra 'I' maiúscula -> underscore
+                (r'(\w)1(\w)', r'\1_\2'),    # número '1' -> underscore
+                (r'(\w)/(\w)', r'\1_\2'),    # barra -> underscore
+                (r'(\w)\\(\w)', r'\1_\2'),   # barra invertida -> underscore
+            ]
+            
+            # Aplica correções de underscore
+            import re
+            for pattern, replacement in underscore_patterns:
+                processed_text = re.sub(pattern, replacement, processed_text)
+            
+            # Correções específicas para contextos comuns
+            # Se o texto parece ser um identificador (sem espaços, com letras e números)
+            if re.match(r'^[a-zA-Z0-9\s\-\.,:;|lI1/\\]+$', processed_text) and len(processed_text.split()) > 1:
+                # Provavelmente é um identificador com underscores mal reconhecidos
+                words = processed_text.split()
+                if len(words) == 2 and all(word.isalnum() or '_' in word for word in words):
+                    processed_text = '_'.join(words)
+            
+            # Correções para padrões específicos de nomes de arquivo/variável
+            # exemplo: "file name.txt" -> "file_name.txt"
+            if '.' in processed_text and ' ' in processed_text:
+                parts = processed_text.split('.')
+                if len(parts) == 2:  # nome.extensão
+                    name_part = parts[0].replace(' ', '_').replace('-', '_')
+                    processed_text = f"{name_part}.{parts[1]}"
+            
+            # Log das correções aplicadas
+            if processed_text != original_text:
+                print(f"[DEBUG UNDERSCORE] Correção aplicada: '{original_text}' -> '{processed_text}'")
+            
+            # Mantém a confiança original, mas pode ajustar se houve muitas correções
+            adjusted_confidence = confidence
+            if processed_text != original_text:
+                # Reduz ligeiramente a confiança para indicar que foi processado
+                adjusted_confidence = max(0.1, confidence * 0.95)
+            
+            processed_results.append((bbox, processed_text, adjusted_confidence))
+        
+        return processed_results
     
     def toggle_theme(self):
         """Alterna entre tema claro e escuro"""
@@ -858,7 +949,15 @@ class ImageToTextApp:
                 else:
                     self.update_status("Carregando modelo OCR...")
                     languages = self.config.get("ocr_languages", ['pt', 'en'])
-                    self.ocr_reader = easyocr.Reader(languages)
+                    # Configuração otimizada para melhor reconhecimento de caracteres especiais
+                    self.ocr_reader = easyocr.Reader(
+                        languages, 
+                        gpu=False,  # Força CPU para maior precisão
+                        model_storage_directory=str(self.cache_dir / "easyocr_models"),
+                        download_enabled=True,
+                        detector=True,
+                        recognizer=True
+                    )
                     # Salva no cache para próximas execuções
                     self.save_model_to_cache(self.ocr_reader, "ocr")
                     self.update_status("Modelo OCR carregado e salvo no cache!")
@@ -1331,7 +1430,21 @@ class ImageToTextApp:
             if self.ocr_reader:
                 # Converte PIL para numpy array
                 img_array = np.array(self.current_image)
-                results = self.ocr_reader.readtext(img_array)
+                # Usa parâmetros otimizados para melhor detecção de caracteres especiais
+                results = self.ocr_reader.readtext(
+                    img_array,
+                    detail=1,
+                    paragraph=False,
+                    width_ths=0.7,
+                    height_ths=0.7,
+                    decoder='greedy',
+                    beamWidth=5,
+                    batch_size=1
+                )
+                
+                # Aplica pós-processamento para underscores
+                results = self.post_process_underscore_detection(results)
+                
                 # Formata o texto de forma estruturada
                 formatted_text = self.format_extracted_text(results)
                 
