@@ -20,8 +20,9 @@ class ImageToTextApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Conversor de Imagem para Texto - YOLO + OCR")
-        self.root.geometry("1000x700")
-        self.root.configure(bg='#f0f0f0')
+        
+        # Configuração responsiva da janela
+        self.setup_responsive_window()
         
         # Variáveis
         self.current_image = None
@@ -52,32 +53,121 @@ class ImageToTextApp:
         self.setup_ui()
         self.load_yolo_model()
         self.load_ocr_model()
+    
+    def setup_responsive_window(self):
+        """Configura janela responsiva baseada na resolução da tela"""
+        # Obtém dimensões da tela
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Calcula tamanho da janela baseado na tela (80% da tela)
+        window_width = min(1400, int(screen_width * 0.8))
+        window_height = min(900, int(screen_height * 0.8))
+        
+        # Centraliza a janela
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        self.root.configure(bg='#f0f0f0')
+        
+        # Configura redimensionamento
+        self.root.minsize(800, 600)  # Tamanho mínimo
+        
+        # Configura grid weights para responsividade
+        self.root.grid_rowconfigure(0, weight=0)  # Título fixo
+        self.root.grid_rowconfigure(1, weight=1)  # Conteúdo principal expansível
+        self.root.grid_rowconfigure(2, weight=0)  # Status bar fixo
+        self.root.grid_columnconfigure(0, weight=1)
+        
+        # Bind para redimensionamento
+        self.root.bind('<Configure>', self.on_window_resize)
+    
+    def on_window_resize(self, event):
+        """Callback para redimensionamento da janela"""
+        if event.widget == self.root:
+            window_width = self.root.winfo_width()
+            window_height = self.root.winfo_height()
+            
+            # Ajustar canvas da imagem baseado no tamanho da janela
+            if hasattr(self, 'image_canvas'):
+                # Calcular novo tamanho do canvas (proporção da janela)
+                canvas_width = max(250, min(600, int(window_width * 0.35)))
+                canvas_height = max(180, min(450, int(canvas_width * 0.75)))
+                
+                self.image_canvas.configure(width=canvas_width, height=canvas_height)
+                
+                # Recentrar imagem se existir
+                if hasattr(self, 'current_image') and self.current_image:
+                    self._center_image_on_canvas()
+            
+            # Ajustar layout para telas pequenas (modo mobile-like)
+            if window_width < 900:  # Tela pequena
+                # Reorganizar layout para vertical se necessário
+                if hasattr(self, 'main_frame'):
+                    # Ajustar proporções das colunas para telas pequenas
+                    self.main_frame.grid_columnconfigure(0, weight=1)
+                    self.main_frame.grid_columnconfigure(1, weight=1)
+            else:  # Tela normal
+                if hasattr(self, 'main_frame'):
+                    # Restaurar proporções normais
+                    self.main_frame.grid_columnconfigure(0, weight=2)
+                    self.main_frame.grid_columnconfigure(1, weight=1)
         
     def setup_ui(self):
-        # Título
-        title_frame = tk.Frame(self.root, bg='#2c3e50', height=80)
-        title_frame.pack(fill='x', padx=10, pady=(10, 0))
-        title_frame.pack_propagate(False)
+        # Título responsivo
+        title_frame = tk.Frame(self.root, bg='#2c3e50')
+        title_frame.grid(row=0, column=0, sticky='ew', padx=10, pady=(10, 0))
+        title_frame.grid_columnconfigure(0, weight=1)
         
-        title_label = tk.Label(title_frame, text="Conversor de Imagem para Texto", 
-                              font=('Arial', 20, 'bold'), fg='white', bg='#2c3e50')
-        title_label.pack(expand=True)
+        # Container para título com padding responsivo
+        title_container = tk.Frame(title_frame, bg='#2c3e50')
+        title_container.grid(row=0, column=0, sticky='ew', padx=20, pady=15)
+        title_container.grid_columnconfigure(0, weight=1)
         
-        subtitle_label = tk.Label(title_frame, text="YOLO + OCR | Arraste, Cole ou Selecione Imagens", 
-                                 font=('Arial', 12), fg='#ecf0f1', bg='#2c3e50')
-        subtitle_label.pack()
+        # Ajustar tamanhos de fonte baseado na resolução
+        screen_width = self.root.winfo_screenwidth()
         
-        # Frame principal
+        # Calcular tamanhos de fonte responsivos
+        if screen_width >= 1920:  # 4K ou maior
+            title_font_size = 22
+            subtitle_font_size = 14
+        elif screen_width >= 1366:  # Full HD
+            title_font_size = 20
+            subtitle_font_size = 12
+        else:  # HD ou menor
+            title_font_size = 18
+            subtitle_font_size = 11
+        
+        title_label = tk.Label(title_container, text="Conversor de Imagem para Texto", 
+                              font=('Arial', title_font_size, 'bold'), fg='white', bg='#2c3e50')
+        title_label.grid(row=0, column=0)
+        
+        subtitle_label = tk.Label(title_container, text="YOLO + OCR | Arraste, Cole ou Selecione Imagens", 
+                                 font=('Arial', subtitle_font_size), fg='#ecf0f1', bg='#2c3e50')
+        subtitle_label.grid(row=1, column=0, pady=(5, 0))
+        
+        # Frame principal com layout responsivo
         main_frame = tk.Frame(self.root, bg='#f0f0f0')
-        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        main_frame.grid(row=1, column=0, sticky='nsew', padx=10, pady=10)
+        main_frame.grid_rowconfigure(0, weight=1)
+        main_frame.grid_columnconfigure(0, weight=2)  # Lado esquerdo maior
+        main_frame.grid_columnconfigure(1, weight=1)  # Lado direito menor
         
-        # Frame esquerdo - Upload e Preview
+        # Armazenar referência para redimensionamento
+        self.main_frame = main_frame
+        
+        # Frame esquerdo - Upload e Preview (responsivo)
         left_frame = tk.Frame(main_frame, bg='white', relief='raised', bd=2)
-        left_frame.pack(side='left', fill='both', expand=True, padx=(0, 5))
+        left_frame.grid(row=0, column=0, sticky='nsew', padx=(0, 5))
+        left_frame.grid_rowconfigure(0, weight=1)
+        left_frame.grid_columnconfigure(0, weight=1)
         
-        # Área de upload
+        # Área de upload responsiva
         self.upload_frame = tk.Frame(left_frame, bg='#ecf0f1', relief='ridge', bd=2)
-        self.upload_frame.pack(fill='both', expand=True, padx=20, pady=20)
+        self.upload_frame.grid(row=0, column=0, sticky='nsew', padx=20, pady=20)
+        self.upload_frame.grid_rowconfigure(0, weight=1)
+        self.upload_frame.grid_columnconfigure(0, weight=1)
         
         # Configurar drag and drop
         self.upload_frame.drop_target_register(DND_FILES)
@@ -111,24 +201,36 @@ class ImageToTextApp:
         # Frame para preview da imagem
         self.preview_frame = tk.Frame(left_frame, bg='white')
         
-        # Canvas para imagem
-        self.image_canvas = tk.Canvas(self.preview_frame, bg='white', width=400, height=300)
-        self.image_canvas.pack(padx=20, pady=20)
+        # Configurar grid do preview_frame
+        self.preview_frame.grid_columnconfigure(0, weight=1)
+        self.preview_frame.grid_rowconfigure(0, weight=1)
+        
+        # Canvas para imagem com tamanho responsivo
+        canvas_width = max(300, min(600, int(self.root.winfo_screenwidth() * 0.3)))
+        canvas_height = max(200, min(450, int(canvas_width * 0.75)))
+        
+        self.image_canvas = tk.Canvas(self.preview_frame, bg='white', 
+                                     width=canvas_width, height=canvas_height)
+        self.image_canvas.grid(row=0, column=0, padx=20, pady=20, sticky='nsew')
         
         # Botão remover imagem
         remove_btn = tk.Button(self.preview_frame, text="Remover Imagem", 
                               command=self.remove_image, font=('Arial', 10),
                               bg='#e74c3c', fg='white', padx=15, pady=5,
                               relief='flat', cursor='hand2')
-        remove_btn.pack(pady=(0, 10))
+        remove_btn.grid(row=1, column=0, pady=(0, 10))
         
         # Frame direito - Resultados
         right_frame = tk.Frame(main_frame, bg='white', relief='raised', bd=2)
-        right_frame.pack(side='right', fill='both', expand=True, padx=(5, 0))
+        right_frame.grid(row=0, column=1, sticky='nsew', padx=(5, 0))
+        
+        # Configurar grid do frame direito
+        right_frame.grid_columnconfigure(0, weight=1)
+        right_frame.grid_rowconfigure(1, weight=1)  # Para o notebook expandir
         
         # Frame de controles
         controls_frame = tk.LabelFrame(right_frame, text="Controles", bg='white', font=('Arial', 10, 'bold'))
-        controls_frame.pack(fill='x', padx=10, pady=(10, 5))
+        controls_frame.grid(row=0, column=0, sticky='ew', padx=10, pady=(10, 5))
         
         # Seção 1: Botões de Área
         area_section = tk.Frame(controls_frame, bg='white')
@@ -272,19 +374,23 @@ class ImageToTextApp:
         
         # Abas para diferentes funcionalidades
         notebook = ttk.Notebook(right_frame)
-        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        notebook.grid(row=1, column=0, sticky='nsew', padx=10, pady=10)
         
         # Aba OCR
         ocr_frame = tk.Frame(notebook, bg='white')
         notebook.add(ocr_frame, text='Texto Extraído (OCR)')
         
+        # Configurar grid do ocr_frame
+        ocr_frame.grid_columnconfigure(0, weight=1)
+        ocr_frame.grid_rowconfigure(3, weight=1)  # Para text_area expandir
+        
         ocr_label = tk.Label(ocr_frame, text="Texto Extraído:", 
                             font=('Arial', 12, 'bold'), bg='white')
-        ocr_label.pack(anchor='w', padx=10, pady=(10, 5))
+        ocr_label.grid(row=0, column=0, sticky='w', padx=10, pady=(10, 5))
         
         # Frame para confiança do OCR
         confidence_frame = tk.Frame(ocr_frame, bg='white')
-        confidence_frame.pack(fill='x', padx=10, pady=(0, 5))
+        confidence_frame.grid(row=1, column=0, sticky='ew', padx=10, pady=(0, 5))
         
         tk.Label(confidence_frame, text="Confiança:", bg='white').pack(side='left')
         
@@ -308,11 +414,11 @@ class ImageToTextApp:
                                                   highlightthickness=1,
                                                   highlightcolor='#3498db',
                                                   highlightbackground='#bdc3c7')
-        self.text_area.pack(fill='both', expand=True, padx=10, pady=5)
+        self.text_area.grid(row=3, column=0, sticky='nsew', padx=10, pady=5)
         
         # Botões para texto
         text_button_frame = tk.Frame(ocr_frame, bg='white')
-        text_button_frame.pack(fill='x', padx=10, pady=10)
+        text_button_frame.grid(row=4, column=0, sticky='ew', padx=10, pady=10)
         
         copy_btn = tk.Button(text_button_frame, text="Copiar Texto", 
                             command=self.copy_text, font=('Arial', 10),
@@ -330,17 +436,21 @@ class ImageToTextApp:
         yolo_frame = tk.Frame(notebook, bg='white')
         notebook.add(yolo_frame, text='Detecção de Objetos (YOLO)')
         
+        # Configurar grid do yolo_frame
+        yolo_frame.grid_columnconfigure(0, weight=1)
+        yolo_frame.grid_rowconfigure(1, weight=1)  # Para yolo_results expandir
+        
         yolo_label = tk.Label(yolo_frame, text="Objetos Detectados:", 
                              font=('Arial', 12, 'bold'), bg='white')
-        yolo_label.pack(anchor='w', padx=10, pady=(10, 5))
+        yolo_label.grid(row=0, column=0, sticky='w', padx=10, pady=(10, 5))
         
         self.yolo_results = scrolledtext.ScrolledText(yolo_frame, wrap=tk.WORD, 
                                                      font=('Arial', 10),
                                                      height=15, width=50)
-        self.yolo_results.pack(fill='both', expand=True, padx=10, pady=5)
+        self.yolo_results.grid(row=1, column=0, sticky='nsew', padx=10, pady=5)
         
         # Barra de progresso
-        self.progress_frame = tk.Frame(self.root, bg='#f0f0f0')
+        self.progress_frame = tk.Frame(self.preview_frame, bg='#f0f0f0')
         
         self.progress_label = tk.Label(self.progress_frame, text="Pronto", 
                                       font=('Arial', 10), bg='#f0f0f0')
@@ -732,67 +842,107 @@ class ImageToTextApp:
                 return []
     
     def post_process_underscore_detection(self, ocr_results):
-        """Pós-processamento para melhorar detecção de underscores e caracteres especiais"""
+        """Pós-processamento inteligente para melhorar detecção de underscores"""
         if not ocr_results:
             return ocr_results
         
         processed_results = []
+        import re
         
         for bbox, text, confidence in ocr_results:
             original_text = text
             processed_text = text
             
-            # Padrões comuns de erro para underscores
-            underscore_patterns = [
-                # Underscores são frequentemente confundidos com hífens ou espaços
-                (r'(\w)\s+(\w)', r'\1_\2'),  # espaço entre palavras -> underscore
-                (r'(\w)-(\w)', r'\1_\2'),    # hífen entre palavras -> underscore
-                (r'(\w)\.(\w)', r'\1_\2'),   # ponto entre palavras -> underscore
-                (r'(\w),(\w)', r'\1_\2'),    # vírgula entre palavras -> underscore
-                (r'(\w);(\w)', r'\1_\2'),    # ponto e vírgula -> underscore
-                (r'(\w):(\w)', r'\1_\2'),    # dois pontos -> underscore
-                (r'(\w)\|(\w)', r'\1_\2'),   # pipe -> underscore
-                (r'(\w)l(\w)', r'\1_\2'),    # letra 'l' minúscula -> underscore
-                (r'(\w)I(\w)', r'\1_\2'),    # letra 'I' maiúscula -> underscore
-                (r'(\w)1(\w)', r'\1_\2'),    # número '1' -> underscore
-                (r'(\w)/(\w)', r'\1_\2'),    # barra -> underscore
-                (r'(\w)\\(\w)', r'\1_\2'),   # barra invertida -> underscore
-            ]
+            # Só aplica correções se o texto parece ser um identificador/código
+            # e não contém já underscores suficientes
+            if self._should_apply_underscore_correction(text):
+                # Padrões mais seletivos para underscores
+                underscore_patterns = [
+                    # Apenas espaços óbvios entre partes de identificadores
+                    (r'([a-zA-Z0-9]+)\s+([a-zA-Z0-9]+)', r'\1_\2'),  # espaço entre alfanuméricos
+                    # Hífens em contexto de identificador
+                    (r'([a-zA-Z0-9]+)-([a-zA-Z0-9]+)', r'\1_\2'),    # hífen entre alfanuméricos
+                ]
+                
+                # Aplica correções seletivas
+                for pattern, replacement in underscore_patterns:
+                    # Só aplica se não vai criar muitos underscores
+                    temp_result = re.sub(pattern, replacement, processed_text)
+                    if temp_result.count('_') <= original_text.count('_') + 2:  # Máximo 2 underscores novos
+                        processed_text = temp_result
+                
+                # Correções específicas para nomes de arquivo
+                if '.' in processed_text and ' ' in processed_text and processed_text.count('.') == 1:
+                    parts = processed_text.split('.')
+                    if len(parts) == 2 and len(parts[1]) <= 4:  # extensão típica
+                        name_part = parts[0].replace(' ', '_')
+                        processed_text = f"{name_part}.{parts[1]}"
             
-            # Aplica correções de underscore
-            import re
-            for pattern, replacement in underscore_patterns:
-                processed_text = re.sub(pattern, replacement, processed_text)
-            
-            # Correções específicas para contextos comuns
-            # Se o texto parece ser um identificador (sem espaços, com letras e números)
-            if re.match(r'^[a-zA-Z0-9\s\-\.,:;|lI1/\\]+$', processed_text) and len(processed_text.split()) > 1:
-                # Provavelmente é um identificador com underscores mal reconhecidos
-                words = processed_text.split()
-                if len(words) == 2 and all(word.isalnum() or '_' in word for word in words):
-                    processed_text = '_'.join(words)
-            
-            # Correções para padrões específicos de nomes de arquivo/variável
-            # exemplo: "file name.txt" -> "file_name.txt"
-            if '.' in processed_text and ' ' in processed_text:
-                parts = processed_text.split('.')
-                if len(parts) == 2:  # nome.extensão
-                    name_part = parts[0].replace(' ', '_').replace('-', '_')
-                    processed_text = f"{name_part}.{parts[1]}"
-            
-            # Log das correções aplicadas
+            # Log apenas se houve mudança significativa
             if processed_text != original_text:
                 print(f"[DEBUG UNDERSCORE] Correção aplicada: '{original_text}' -> '{processed_text}'")
             
-            # Mantém a confiança original, mas pode ajustar se houve muitas correções
+            # Mantém confiança original para mudanças mínimas
             adjusted_confidence = confidence
             if processed_text != original_text:
-                # Reduz ligeiramente a confiança para indicar que foi processado
-                adjusted_confidence = max(0.1, confidence * 0.95)
+                adjusted_confidence = max(0.1, confidence * 0.98)  # Redução mínima
             
             processed_results.append((bbox, processed_text, adjusted_confidence))
         
         return processed_results
+    
+    def _should_apply_underscore_correction(self, text):
+        """Determina se deve aplicar correção de underscore no texto"""
+        import re
+        
+        # Não corrige se já tem muitos underscores
+        if text.count('_') >= 3:
+            return False
+            
+        # Não corrige textos muito curtos
+        if len(text) < 4:
+            return False
+            
+        # Não corrige se parece ser texto natural (muitas palavras)
+        words = text.split()
+        if len(words) > 3:
+            return False
+            
+        # Não corrige se tem pontuação de texto natural
+        if any(char in text for char in '.,!?;:'):
+            return False
+            
+        # Não corrige se já parece estar correto (códigos com underscores)
+        if self._looks_like_valid_code(text):
+            return False
+            
+        # Aplica correção se parece ser identificador/código
+        # (contém letras, números, poucos espaços/hífens)
+        if re.match(r'^[a-zA-Z0-9\s\-_]+$', text) and (' ' in text or '-' in text):
+            return True
+            
+        return False
+    
+    def _looks_like_valid_code(self, text):
+        """Verifica se o texto já parece ser um código válido"""
+        import re
+        
+        # Se já tem underscores e não tem espaços, provavelmente está correto
+        if '_' in text and ' ' not in text:
+            return True
+            
+        # Padrões de códigos comuns que não devem ser alterados
+        code_patterns = [
+            r'^[A-Z0-9]+_[A-Z0-9]+_[A-Z0-9]+',  # Padrão como 9AKS8_4M50479_00
+            r'^[0-9]+[A-Z]+[0-9]+_[0-9A-Z_]+$',  # Códigos alfanuméricos com underscores
+            r'^[A-Z0-9]{3,}_[A-Z0-9]{3,}',       # Códigos com partes bem definidas
+        ]
+        
+        for pattern in code_patterns:
+            if re.match(pattern, text):
+                return True
+                
+        return False
     
     def toggle_theme(self):
         """Alterna entre tema claro e escuro"""
@@ -998,20 +1148,51 @@ class ImageToTextApp:
     
     def paste_image(self):
         """Cola imagem da área de transferência"""
+        print("[DEBUG] Função paste_image() chamada")
         try:
             from PIL import ImageGrab
-            image = ImageGrab.grabclipboard()
-            if image:
+            print("[DEBUG] Tentando acessar clipboard...")
+            
+            # Tenta diferentes métodos para acessar o clipboard
+            image = None
+            
+            # Método 1: ImageGrab.grabclipboard()
+            try:
+                image = ImageGrab.grabclipboard()
+                print(f"[DEBUG] ImageGrab.grabclipboard() retornou: {type(image)}")
+            except Exception as e:
+                print(f"[DEBUG] Erro no ImageGrab.grabclipboard(): {e}")
+            
+            # Método 2: Usando tkinter clipboard (fallback)
+            if image is None:
+                try:
+                    # Verifica se há dados de imagem no clipboard do tkinter
+                    clipboard_data = self.root.clipboard_get()
+                    print(f"[DEBUG] Clipboard tkinter contém: {type(clipboard_data)}")
+                except:
+                    print("[DEBUG] Nenhum dado no clipboard do tkinter")
+            
+            if image and hasattr(image, 'size'):
+                print(f"[DEBUG] Imagem encontrada no clipboard: {image.size}")
                 self.original_image = image
                 self.current_image = image.copy()
+                
                 # Salva temporariamente
                 temp_path = "temp_clipboard_image.png"
                 image.save(temp_path)
+                print(f"[DEBUG] Imagem salva temporariamente em: {temp_path}")
+                
                 self.load_image(temp_path)
+                print("[DEBUG] Imagem carregada com sucesso")
             else:
-                messagebox.showinfo("Info", "Nenhuma imagem encontrada na área de transferência.")
+                print("[DEBUG] Nenhuma imagem válida encontrada no clipboard")
+                messagebox.showinfo("Info", "Nenhuma imagem encontrada na área de transferência.\n\nDica: Copie uma imagem (Ctrl+C) antes de tentar colar.")
+                
         except Exception as e:
-            messagebox.showerror("Erro", f"Erro ao colar imagem: {str(e)}")
+            print(f"[DEBUG] Erro na função paste_image: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Erro", f"Erro ao colar imagem: {str(e)}\n\nVerifique se há uma imagem copiada na área de transferência.")
     
     def is_image_file(self, file_path):
         """Verifica se o arquivo é uma imagem"""
@@ -1057,10 +1238,10 @@ class ImageToTextApp:
             # Aguarda um momento para garantir que o canvas tenha as dimensões corretas
             self.root.after(10, lambda: self._center_image_on_canvas())
             
-            # Mostra o frame de preview
-            self.upload_frame.pack_forget()
-            self.preview_frame.pack(fill='both', expand=True)
-            self.progress_frame.pack(fill='x', pady=5)
+            # Mostra o frame de preview usando grid (não pack)
+            self.upload_frame.grid_forget()
+            self.preview_frame.grid(row=0, column=0, sticky='nsew')
+            self.progress_frame.grid(row=2, column=0, sticky='ew', pady=5)
             
             # Processa a imagem em thread separada
             Thread(target=self.process_image, daemon=True).start()
@@ -1146,10 +1327,10 @@ class ImageToTextApp:
         self.text_area.delete(1.0, tk.END)
         self.yolo_results.delete(1.0, tk.END)
         
-        # Volta para a tela de upload
-        self.preview_frame.pack_forget()
-        self.progress_frame.pack_forget()
-        self.upload_frame.pack(fill='both', expand=True, padx=20, pady=20)
+        # Volta para a tela de upload usando grid (não pack)
+        self.preview_frame.grid_forget()
+        self.progress_frame.grid_forget()
+        self.upload_frame.grid(row=0, column=0, sticky='nsew', padx=20, pady=20)
         
         self.update_status("Pronto")
     
